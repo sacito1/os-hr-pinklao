@@ -1,0 +1,67 @@
+/* OS HR app shell: caches only this small launcher page + icons.
+   HR data is never cached — it always loads live from the online system. */
+var CACHE = 'os-hr-pk-v1';
+var SHELL = ['./', './index.html', './manifest.json', './icon-192.png', './icon-512.png', './apple-touch-icon.png', './favicon.png', './badge-96.png'];
+var EXEC = 'https://script.google.com/macros/s/AKfycbxOrAJiOcdLC8W3FqiEi3eR3f6_gUclPImMxpxg6zgZpRsIDkHKxng9sZfoB8IyJy3oSw/exec';
+
+self.addEventListener('install', function (e) {
+  e.waitUntil(caches.open(CACHE).then(function (c) { return c.addAll(SHELL); }).then(function () { return self.skipWaiting(); }));
+});
+
+self.addEventListener('activate', function (e) {
+  e.waitUntil(caches.keys().then(function (keys) {
+    return Promise.all(keys.map(function (k) { return k.indexOf('os-hr-pk-') !== 0 || k === CACHE || k === 'os-hr-pk-seen' ? null : caches.delete(k); })); /* ลบเฉพาะแคชเก่าของแอปปิ่นเกล้าเอง (ไม่ยุ่งกับแอปสาขาหลัก) */
+  }).then(function () { return self.clients.claim(); }));
+});
+
+self.addEventListener('fetch', function (e) {
+  var req = e.request;
+  if (req.method !== 'GET' || new URL(req.url).origin !== self.location.origin) return; // HR system itself is never touched
+  if (req.mode === 'navigate') {
+    e.respondWith(fetch(req).then(function (res) {
+      var copy = res.clone(); caches.open(CACHE).then(function (c) { c.put('./index.html', copy); });
+      return res;
+    }).catch(function () { return caches.match('./index.html'); }));
+    return;
+  }
+  e.respondWith(caches.match(req).then(function (hit) { return hit || fetch(req); }));
+});
+
+/* ---------- แจ้งเตือน: ระบบส่งสัญญาณมา แล้วดึงข้อความล่าสุดจากระบบ HR ---------- */
+function hex40(s) {
+  return crypto.subtle.digest('SHA-256', new TextEncoder().encode(s)).then(function (b) {
+    return Array.from(new Uint8Array(b)).map(function (x) { return ('0' + x.toString(16)).slice(-2); }).join('').slice(0, 40);
+  });
+}
+function seenGet() { return caches.open('os-hr-pk-seen').then(function (c) { return c.match('/seen'); }).then(function (r) { return r ? r.json() : []; }).catch(function () { return []; }); }
+function seenPut(a) { return caches.open('os-hr-pk-seen').then(function (c) { return c.put('/seen', new Response(JSON.stringify(a.slice(-60)))); }).catch(function () {}); }
+
+self.addEventListener('push', function (e) {
+  e.waitUntil(self.registration.pushManager.getSubscription().then(function (sub) {
+    if (!sub) return [];
+    return hex40(sub.endpoint).then(function (h) { return fetch(EXEC + '?pull=' + h, { cache: 'no-store' }); }).then(function (r) { return r.json(); });
+  }).catch(function () { return []; }).then(function (items) {
+    /* บอกหน้าแอปที่เปิดอยู่ให้โหลดข้อมูลใหม่ทันที (เช่น เพิ่งสแกนหน้า เวลาจะขึ้นในแอปเลย) */
+    self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then(function (ws) { ws.forEach(function (w) { try { w.postMessage({ t: 'oshr-push' }); } catch (x) {} }); }).catch(function () {});
+    return seenGet().then(function (seen) {
+      items = Array.isArray(items) ? items : [];
+      var fresh = items.filter(function (it) { return seen.indexOf(it.id) < 0; });
+      if (!fresh.length) fresh = items.length ? [items[0]] : [{ id: 'x', title: 'OS HR ปิ่นเกล้า', body: 'มีการแจ้งเตือนใหม่ · အသိပေးချက်အသစ်', tag: 'oshr' }];
+      return seenPut(seen.concat(fresh.map(function (it) { return it.id; }))).then(function () {
+        return Promise.all(fresh.reverse().map(function (it) {
+          var opt = { body: it.body || '', tag: it.tag || it.id, icon: 'icon-192.png', badge: 'badge-96.png', data: { url: './' } };
+          if (it.u) { opt.requireInteraction = true; opt.renotify = true; opt.vibrate = [400, 150, 400, 150, 900]; } // เตือนลงเวลา: เด้งค้างจนกว่าจะกด + สั่นแรง
+          return self.registration.showNotification(it.title || 'OS HR ปิ่นเกล้า', opt);
+        }));
+      });
+    });
+  }));
+});
+
+self.addEventListener('notificationclick', function (e) {
+  e.notification.close();
+  e.waitUntil(self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then(function (ws) {
+    for (var i = 0; i < ws.length; i++) { if ('focus' in ws[i]) return ws[i].focus(); }
+    return self.clients.openWindow('./');
+  }));
+});
