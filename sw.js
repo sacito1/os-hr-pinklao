@@ -1,6 +1,6 @@
 /* OS HR app shell: caches only this small launcher page + icons.
    HR data is never cached — it always loads live from the online system. */
-var CACHE = 'os-hr-pk-v1';
+var CACHE = 'os-hr-pk-v2';
 var SHELL = ['./', './index.html', './manifest.json', './icon-192.png', './icon-512.png', './apple-touch-icon.png', './favicon.png', './badge-96.png'];
 var EXEC = 'https://script.google.com/macros/s/AKfycbxOrAJiOcdLC8W3FqiEi3eR3f6_gUclPImMxpxg6zgZpRsIDkHKxng9sZfoB8IyJy3oSw/exec';
 
